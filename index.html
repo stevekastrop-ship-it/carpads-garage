@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Client Garage | CARPADS Private Car Storage</title>
+  <meta name="description" content="CARPADS Client Garage: check the status, condition and location of your stored cars, and schedule delivery, pickup, service or detailing. Private car storage in Switzerland.">
+  <!-- Change to https://www.carpads.ch/garage/ when the site moves to the carpads.ch domain. -->
+  <link rel="canonical" href="https://stevekastrop-ship-it.github.io/carpads-garage/">
+  <meta name="robots" content="index, follow">
+
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CARPADS">
+  <meta property="og:title" content="CARPADS Client Garage">
+  <meta property="og:description" content="Your cars in storage at a glance: condition, location and service. Schedule delivery or pickup in a tap.">
+  <meta property="og:image" content="icons/icon-512.png">
+
+  <!-- Installable web app -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#12151c">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="CARPADS">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebApplication",
+    "name": "CARPADS Client Garage",
+    "applicationCategory": "LifestyleApplication",
+    "operatingSystem": "iOS, Android, Web",
+    "description": "Client portal for CARPADS private car storage: car condition, location, delivery and pickup scheduling.",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "CHF" },
+    "provider": {
+      "@type": "Organization",
+      "name": "CARPADS",
+      "email": "hello@carpads.ch",
+      "telephone": "+41 78 326 48 48",
+      "url": "https://www.carpads.ch"
+    }
+  }
+  </script>
+
+  <link rel="stylesheet" href="assets/styles.css">
+  <script type="module" src="assets/app.js"></script>
+</head>
+<body>
+  <div id="app">
+    <!-- Shown to search engines and before the app loads. -->
+    <main class="login">
+      <div class="brand">
+        <h1 class="wordmark">CARPADS</h1>
+        <p class="tagline">Client Garage</p>
+      </div>
+      <p class="intro">Your cars in storage at a glance. See the condition, location and service status of every car, and schedule a delivery, pickup, service or detailing in a tap.</p>
+      <noscript><p class="intro">Please enable JavaScript to sign in to your garage.</p></noscript>
+    </main>
+  </div>
+  <dialog id="modal" aria-modal="true"></dialog>
+  <div id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
