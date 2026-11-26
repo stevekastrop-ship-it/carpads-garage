@@ -76,10 +76,18 @@ class SupabaseBackend {
     const { createClient } = await import("https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/+esm");
     const backend = new SupabaseBackend();
     // A password-reset email link lands here with "type=recovery" in the address.
-    backend.recovery = /type=recovery/.test(location.hash);
+    const link = new URLSearchParams(location.hash.slice(1) + "&" + location.search.slice(1));
+    backend.recovery = link.get("type") === "recovery";
+    // An expired or already-used link comes back with an error instead of tokens.
+    backend.linkError = link.get("error_description")?.replace(/\+/g, " ") || null;
     backend.sb = createClient(CONFIG.supabaseUrl, CONFIG.supabaseAnonKey);
-    await backend.sb.auth.getSession(); // lets the client read the link's tokens first
-    if (backend.recovery) history.replaceState(null, "", location.pathname);
+    backend.sb.auth.onAuthStateChange((event) => { if (event === "PASSWORD_RECOVERY") backend.recovery = true; });
+    const { data } = await backend.sb.auth.getSession(); // lets the client read the link's tokens first
+    if (link.get("code") && !data.session) {
+      await backend.sb.auth.exchangeCodeForSession(link.get("code")).catch(() => {});
+    }
+    if (backend.recovery || backend.linkError || link.get("code")) history.replaceState(null, "", location.pathname);
+    backend.hasSession = async () => !!(await backend.sb.auth.getSession()).data.session;
     return backend;
   }
 

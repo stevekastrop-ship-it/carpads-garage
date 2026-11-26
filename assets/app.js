@@ -249,6 +249,7 @@ function newPasswordDialog() {
       await run(e.target.querySelector('[type="submit"]'), () => state.backend.changePassword(String(f.get("pw"))));
       $modal.close();
       toast("Password saved.");
+      if (!state.profile) { state.profile = await state.backend.restore(); render(); }
     });
   });
 }
@@ -789,5 +790,7 @@ if ("serviceWorker" in navigator && location.protocol === "https:") {
     state.profile = await state.backend.signIn(...creds).catch(() => null);
   }
   render();
-  if (state.backend?.recovery && state.profile) newPasswordDialog();
+  const b = state.backend;
+  if (b?.recovery && (state.profile || (b.hasSession && await b.hasSession()))) newPasswordDialog();
+  else if (b?.linkError) toast(`This reset link no longer works (${b.linkError}). Please request a new one.`);
 })();
