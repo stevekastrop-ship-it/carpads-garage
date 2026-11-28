@@ -44,6 +44,7 @@ class ServerBackend {
   async changePassword(password) { await this.call("POST", "password", { password }); }
   async myCars() { return this.call("GET", "my/cars"); }
   async myRequests() { return this.call("GET", "my/requests"); }
+  async myHistory() { return this.call("GET", "my/history"); }
   async createRequest({ car, kind, preferredDate, timeWindow, address, message }) {
     await this.call("POST", "requests", {
       car_id: car.id, kind, preferred_date: preferredDate, time_window: timeWindow, address, message,
@@ -135,6 +136,9 @@ class SupabaseBackend {
     return must(await this.sb.from("service_requests").select("*")
       .eq("owner_id", uid).eq("status", "open").order("created_at", { ascending: false }));
   }
+
+  // Your own requests, open and done (access rules only return your own).
+  async myHistory() { return this.clientRequests(await this.uid()); }
 
   async createRequest({ car, kind, preferredDate, timeWindow, address, message }) {
     const uid = await this.uid();
@@ -365,6 +369,12 @@ class DemoBackend {
 
   async clientRequests(ownerId) {
     this.admin();
+    return this.history(ownerId);
+  }
+
+  async myHistory() { return this.history(this.me().id); }
+
+  history(ownerId) {
     return this.db.requests.filter((r) => r.owner_id === ownerId).map((r) => {
       const car = this.db.cars.find((c) => c.id === r.car_id);
       return { ...r, cars: car ? { make_model: car.make_model, plate: car.plate } : null };

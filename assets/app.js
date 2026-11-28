@@ -257,9 +257,27 @@ function newPasswordDialog() {
 
 // ───────────────────────── views: client ─────────────────────────
 
+function garageTabs(active) {
+  return `<nav class="tabs">
+    <a href="#garage" class="${active === "garage" ? "active" : ""}">My cars</a>
+    <a href="#history" class="${active === "history" ? "active" : ""}">History</a>
+  </nav>`;
+}
+
+async function viewMyHistory() {
+  document.title = "History | CARPADS";
+  $app.innerHTML = `${topbar("My Garage")}${garageTabs("history")}
+    <main class="page"><div id="history"><div class="loading">Loading history…</div></div></main>`;
+  const [cars, requests] = await Promise.all([state.backend.myCars(), state.backend.myHistory()]);
+  state.historyCars = cars;
+  state.historyCar = cars.some((c) => c.id === state.historyCar) ? state.historyCar : "";
+  state.history = requests;
+  drawHistory();
+}
+
 async function viewGarage() {
   document.title = "My Garage | CARPADS";
-  $app.innerHTML = `${topbar("My Garage")}<main class="page"><div class="loading">Loading your garage…</div></main>`;
+  $app.innerHTML = `${topbar("My Garage")}${garageTabs("garage")}<main class="page"><div class="loading">Loading your garage…</div></main>`;
   const [cars, requests] = await Promise.all([state.backend.myCars(), state.backend.myRequests()]);
   state.cars = cars;
   const openFor = (car) => requests.filter((r) => r.car_id === car.id);
@@ -495,6 +513,7 @@ async function viewAdminClient(id, tab = "overview") {
     $app.innerHTML = `${topbar(client.full_name || client.email, clientBar)}${clientTabs(id, "history")}
       <main class="page"><div id="history"><div class="loading">Loading history…</div></div></main>`;
     state.historyCar = cars.some((c) => c.id === state.historyCar) ? state.historyCar : "";
+    state.historyCars = cars;
     state.history = await state.backend.clientRequests(id);
     drawHistory();
     return;
@@ -513,11 +532,12 @@ async function viewAdminClient(id, tab = "overview") {
     </main>`;
 }
 
-// Requests marked done for the open client, filterable by car.
+// A client's requests split into Open and Done, filterable by car. Used by the admin's client page and the client's own History tab.
 function drawHistory() {
   const card = $app.querySelector("#history");
   if (!card) return;
-  const cars = state.adminCars || [];
+  const cars = state.historyCars || [];
+  const isAdmin = state.profile?.role === "admin";
   const shown = (state.history || []).filter((r) => !state.historyCar || r.car_id === state.historyCar);
   const filter = cars.length > 1 ? `<section class="card"><label class="field"><span>Car</span>
     <select id="history-car"><option value="">All cars</option>${cars.map((c) => `
@@ -531,7 +551,7 @@ function drawHistory() {
         <div><strong>${esc(r.cars?.make_model || "Car")}</strong> <span class="muted">${esc(r.cars?.plate || "")}</span></div>
         ${r.address ? `<div>📍 ${esc(r.address)}</div>` : ""}
         ${r.message ? `<div class="quote">“${esc(r.message)}”</div>` : ""}
-        ${r.status === "open"
+        ${r.status === "open" && isAdmin
           ? `<div class="request-foot"><small class="muted">Requested ${swissDate(r.created_at)}</small>
               <button class="btn outline small" data-action="resolve" data-id="${r.id}">Mark done</button></div>`
           : `<small class="muted">Requested ${swissDate(r.created_at)}${r.done_at ? ` · Done ${swissDate(r.done_at)}` : ""}</small>`}
@@ -785,6 +805,7 @@ async function render() {
     }
     const m = hash.match(/^#car-(.+)$/);
     if (m) return await viewCar(m[1]);
+    if (hash === "#history") return await viewMyHistory();
     if (hash !== "#garage") history.replaceState(null, "", "#garage");
     return await viewGarage();
   } catch (err) {
