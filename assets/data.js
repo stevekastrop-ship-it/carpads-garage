@@ -120,6 +120,18 @@ class SupabaseBackend {
 
   async signOut() { await this.sb.auth.signOut(); }
 
+  // Owners create their own free account. Returns { profile } when signed in right away,
+  // or { confirm: true } when they first need to click the link in the confirmation email.
+  async signUp({ fullName, email, password }) {
+    const { data, error } = await this.sb.auth.signUp({
+      email, password,
+      options: { data: { full_name: fullName }, emailRedirectTo: location.origin + location.pathname },
+    });
+    if (error) throw new Error(error.message || "Could not create the account.");
+    if (!data.session) return { confirm: true };
+    return { profile: await this.profile(data.user.id) };
+  }
+
   async resetPassword(email) {
     const redirectTo = location.origin + location.pathname;
     must(await this.sb.auth.resetPasswordForEmail(email, { redirectTo }));
@@ -202,23 +214,29 @@ class SupabaseBackend {
 
 // ───────────────────────── Demo (in this browser) ─────────────────────────
 
-const DEMO_KEY = "carpads-garage-demo-v1";
+const DEMO_KEY = "carpads-garage-demo-v2"; // v2: managers, self-managed owners, due dates
+const CARPADS_ORG = "carpads";
 const SESSION_KEY = "carpads-garage-demo-session";
+
+const isoDay = (date) => date.toISOString().slice(0, 10);
 
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID()
   : "10000000-1000-4000-8000-100000000000".replace(/[018]/g, (c) =>
     (c ^ (Math.random() * 16) >> (c / 4)).toString(16)));
 
 function seed() {
-  const admin = { id: uuid(), full_name: "Steve Kastrop", email: "admin@carpads.ch", phone: "+41 78 326 48 48", role: "admin" };
-  const demo = { id: uuid(), full_name: "Demo Client", email: "demo@carpads.ch", phone: "+41 79 000 00 00", role: "client" };
+  const admin = { id: uuid(), full_name: "Steve Kastrop", email: "admin@carpads.ch", phone: "+41 78 326 48 48", role: "admin", managed_by: null, plan: "free" };
+  const demo = { id: uuid(), full_name: "Demo Client", email: "demo@carpads.ch", phone: "+41 79 000 00 00", role: "client", managed_by: CARPADS_ORG, plan: "free" };
+  // An owner who signed up in the app and keeps their car elsewhere (no manager, free plan).
+  const owner = { id: uuid(), full_name: "Demo Owner", email: "owner@carpads.ch", phone: null, role: "client", managed_by: null, plan: "free" };
+  const soon = (days) => isoDay(new Date(Date.now() + days * 86400000));
   const car = (o) => ({
     id: uuid(), owner_id: demo.id, insurance: "Allianz", fuel_level: null, action_alert: null,
     location_name: null, latitude: null, longitude: null, ...o,
   });
   return {
-    profiles: [admin, demo],
-    passwords: { "admin@carpads.ch": "admin", "demo@carpads.ch": "demo" },
+    profiles: [admin, demo, owner],
+    passwords: { "admin@carpads.ch": "admin", "demo@carpads.ch": "demo", "owner@carpads.ch": "owner" },
     cars: [
       car({ make_model: "Rolls-Royce Spectre", plate: "GR 164789", policy_number: "16.548.9563", mileage_km: 1230,
         status: "stored", interior: 84, exterior: 58, battery: 98, service: 25, action_alert: "Book Service",
@@ -229,7 +247,12 @@ function seed() {
         latitude: 46.8499, longitude: 9.5329, last_check_at: "2024-02-23" }),
       car({ make_model: "Ferrari 458 Italia", plate: "GR 388883", policy_number: "16.598.6789", mileage_km: 5640,
         status: "retrieved", interior: 75, exterior: 90, battery: 100, service: 87,
-        location_name: "With owner", last_check_at: "2024-04-15" }),
+        location_name: "With owner", last_check_at: "2024-04-15", mfk_due: soon(40) }),
+      car({ owner_id: owner.id, make_model: "Porsche 911 Carrera 2.7", plate: "ZH 911273", insurance: "AXA",
+        policy_number: "", mileage_km: 88400, status: "retrieved", location_name: "Private garage, Zürich",
+        last_check_at: null, interior: 0, exterior: 0, battery: 0, service: 0,
+        mfk_due: soon(-12), insurance_due: soon(75), service_due: soon(150), notes: "Battery charger on every 2 weeks.",
+        updated_at: new Date(Date.now() - 43 * 86400000).toISOString() }),
     ],
     requests: [],
   };
@@ -271,6 +294,15 @@ class DemoBackend {
     return p;
   }
 
+  async signUp({ fullName, email, password }) {
+    if (this.db.profiles.some((p) => p.email === email)) throw new Error("An account with this email already exists.");
+    const p = { id: uuid(), full_name: fullName, email, phone: null, role: "client", managed_by: null, plan: "free" };
+    this.db.profiles.push(p);
+    this.db.passwords[email] = password;
+    this.persist();
+    return { profile: await this.signIn(email, password) };
+  }
+
   async resetPassword() {
     throw new Error("Password reset emails are not sent in demo mode.");
   }
@@ -297,6 +329,7 @@ class DemoBackend {
 
   async createRequest({ car, kind, preferredDate, timeWindow, address, message }) {
     const me = this.me();
+    if (me.managed_by == null) throw new Error("Requests go to your storage manager. You don't have one yet.");
     this.db.requests.unshift({
       id: uuid(), car_id: car.id, owner_id: me.id, kind, status: "open",
       preferred_date: preferredDate || null, time_window: timeWindow || null,
@@ -316,15 +349,30 @@ class DemoBackend {
     return this.db.cars.filter((c) => c.owner_id === ownerId).sort(byName);
   }
 
+  // Same rules as the database: the admin edits every car; an owner without a manager edits their own,
+  // up to 2 cars on the free plan.
+  canEdit(ownerId) {
+    const me = this.me();
+    if (me.role === "admin") return;
+    if (me.managed_by == null && ownerId === me.id) return;
+    throw new Error("Only CARPADS staff can do this.");
+  }
+
   async saveCar(car) {
-    this.admin();
+    this.canEdit(car.owner_id);
     const i = this.db.cars.findIndex((c) => c.id === car.id);
-    if (i >= 0) this.db.cars[i] = car; else this.db.cars.push(car);
+    const owner = this.db.profiles.find((p) => p.id === car.owner_id);
+    if (i < 0 && owner?.managed_by == null && owner?.role === "client" && owner?.plan !== "plus"
+      && this.db.cars.filter((c) => c.owner_id === car.owner_id).length >= 2) {
+      throw new Error("The free plan holds up to 2 cars.");
+    }
+    const saved = { ...car, updated_at: new Date().toISOString() };
+    if (i >= 0) this.db.cars[i] = saved; else this.db.cars.push(saved);
     this.persist();
   }
 
   async deleteCar(id) {
-    this.admin();
+    this.canEdit(this.db.cars.find((c) => c.id === id)?.owner_id);
     this.db.cars = this.db.cars.filter((c) => c.id !== id);
     this.db.requests = this.db.requests.filter((r) => r.car_id !== id);
     this.persist();
@@ -333,7 +381,7 @@ class DemoBackend {
   async createClient({ fullName, email, phone, password }) {
     this.admin();
     if (this.db.profiles.some((p) => p.email === email)) throw new Error("A client with this email already exists.");
-    const p = { id: uuid(), full_name: fullName, email, phone: phone || null, role: "client" };
+    const p = { id: uuid(), full_name: fullName, email, phone: phone || null, role: "client", managed_by: CARPADS_ORG, plan: "free" };
     this.db.profiles.push(p);
     this.db.passwords[email] = password;
     this.persist();

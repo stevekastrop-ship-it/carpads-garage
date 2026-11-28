@@ -1,5 +1,5 @@
 // Offline shell for the installed app. Data (Supabase) always comes from the network.
-const CACHE = "carpads-garage-v1";
+const CACHE = "carpads-garage-v2";
 const SHELL = [
   "./", "index.html", "manifest.webmanifest",
   "assets/styles.css", "assets/app.js", "assets/data.js", "assets/config.js",

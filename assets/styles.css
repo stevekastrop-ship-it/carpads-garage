@@ -271,3 +271,27 @@ dialog::backdrop { background: rgba(0, 0, 0, .6); }
 #toast.show { opacity: 1; transform: translate(-50%, 0); }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+/* ───── Own cars (owners who signed up themselves) ───── */
+.signup-pitch { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; border: 1px solid #3a3d47; border-radius: 14px; }
+.signup-pitch p { margin: 0; color: var(--muted); font-size: 15px; }
+.signup-pitch strong { color: var(--text); }
+.section-head.static { cursor: default; }
+.due-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.due {
+  font-size: 13px; padding: 4px 10px; border-radius: 999px; white-space: nowrap;
+  background: var(--surface-2); border: 1px solid #3a3d47; color: var(--muted);
+}
+.due.soon { color: var(--fair); border-color: color-mix(in srgb, var(--fair) 60%, transparent); }
+.due.overdue { color: #fff; background: var(--poor); border-color: var(--poor); }
+.coming-up { margin-top: 16px; }
+.due-item { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
+.self-note { margin: 0; font-size: 13px; color: var(--muted); }
+.owner-add { padding: 18px var(--gutter) 6px; }
+.owner-add p { margin: 0; }
+.pitch { margin-top: 22px; border: 1px solid #3a3d47; }
+.rings.preview { max-width: 360px; }
+.list-label {
+  font-size: 12px; letter-spacing: .2em; text-transform: uppercase; color: var(--muted);
+  padding: 14px 0 0; font-weight: 600;
+}

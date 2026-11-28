@@ -54,6 +54,44 @@ const kindsFor = (car) => car.status === "stored"
   : ["pickup", "service", "detailing", "other"];
 const logisticsKind = (car) => (car.status === "stored" ? "delivery" : "pickup");
 
+// Owners who signed up in the app themselves have no manager and look after their own cars.
+// (The self-hosted server add-on has no managers yet, so its profiles have no managed_by and stay managed.)
+const isSelfManaged = (p) => !!p && p.role === "client" && p.managed_by === null;
+const FREE_CARS = 2;
+const carLimit = (p) => (p?.plan === "plus" ? Infinity : FREE_CARS);
+
+// Due dates kept per car. MFK = the Swiss vehicle inspection.
+const DUES = [["mfk_due", "MFK"], ["insurance_due", "Insurance"], ["service_due", "Service"]];
+const SOON_DAYS = 60;
+function daysUntil(iso) {
+  const d = new Date(iso + "T12:00:00");
+  const today = new Date(); today.setHours(12, 0, 0, 0);
+  return Math.round((d - today) / 86400000);
+}
+function dueText(iso) {
+  const n = daysUntil(iso);
+  if (n < 0) return `overdue since ${swissDate(iso)}`;
+  if (n === 0) return "due today";
+  return `due ${swissDate(iso)}`;
+}
+const dueClass = (iso) => { const n = daysUntil(iso); return n < 0 ? "due overdue" : n <= SOON_DAYS ? "due soon" : "due"; };
+const dueChips = (car) => {
+  const list = DUES.filter(([k]) => car[k]);
+  return list.length ? `<div class="due-row">${list.map(([k, label]) =>
+    `<span class="${dueClass(car[k])}">${label} ${dueText(car[k])}</span>`).join("")}</div>` : "";
+};
+// Everything overdue or due within SOON_DAYS, soonest first.
+const upcoming = (cars) => cars.flatMap((car) => DUES.filter(([k]) => car[k] && daysUntil(car[k]) <= SOON_DAYS)
+  .map(([k, label]) => ({ car, label, date: car[k] }))).sort((a, b) => a.date.localeCompare(b.date));
+
+function ago(iso) {
+  if (!iso) return "";
+  const days = Math.floor((Date.now() - new Date(iso)) / 86400000);
+  if (days <= 0) return "today";
+  if (days === 1) return "yesterday";
+  return `${days} days ago`;
+}
+
 function toast(message) {
   $toast.textContent = message;
   $toast.classList.add("show");
@@ -191,11 +229,16 @@ function viewLogin() {
         <button class="btn primary" type="submit">Sign in</button>
         <button class="link" type="button" id="forgot">Forgot password?</button>
       </form>
-      ${isDemo ? `<p class="demo-note">Demo mode<br>Client: demo@carpads.ch / demo<br>Admin: admin@carpads.ch / admin</p>` : ""}
+      ${state.backend?.signUp ? `<section class="signup-pitch">
+        <p><strong>Your cars somewhere else?</strong> Keep MFK, insurance and service dates for any car in one place, with reminders. Free for up to ${FREE_CARS} cars.</p>
+        <button class="btn outline" type="button" id="signup">Create a free account</button>
+      </section>` : ""}
+      ${isDemo ? `<p class="demo-note">Demo mode<br>Client: demo@carpads.ch / demo<br>Own cars: owner@carpads.ch / owner<br>Admin: admin@carpads.ch / admin</p>` : ""}
       <p class="intro">Your cars in storage at a glance: condition, location and service status, with delivery and pickup in a tap.</p>
       ${footer()}
     </main>`;
 
+  document.getElementById("signup")?.addEventListener("click", signUpDialog);
   document.getElementById("forgot").addEventListener("click", () => forgotDialog(
     document.querySelector('#login-form input[name="email"]').value.trim()));
 
@@ -213,6 +256,47 @@ function viewLogin() {
       err.textContent = ex.message;
       err.hidden = false;
     }
+  });
+}
+
+function signUpDialog() {
+  openModal(`
+    <form class="sheet" id="signup-form">
+      <header class="sheet-head"><button type="button" class="link" data-close>Cancel</button><h2>Free account</h2><span></span></header>
+      <p class="muted">Keep track of your own cars: MFK, insurance and service dates with reminders. Free for up to ${FREE_CARS} cars.</p>
+      <label class="field"><span>Full name</span><input name="full_name" required autocomplete="name"></label>
+      <label class="field"><span>Email</span><input name="email" type="email" required autocomplete="username" inputmode="email"></label>
+      <label class="field"><span>Password</span><input name="password" type="password" minlength="8" required autocomplete="new-password"></label>
+      <p class="error" hidden></p>
+      <button class="btn primary" type="submit">Create account</button>
+      <small class="muted">Storing your car with ${COMPANY.name} already? You don't need to sign up: ${COMPANY.name} sets up your login.</small>
+    </form>`, (dlg) => {
+    const form = dlg.querySelector("form");
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const f = new FormData(form);
+      const email = String(f.get("email")).trim().toLowerCase();
+      const err = form.querySelector(".error");
+      err.hidden = true;
+      let res;
+      try {
+        res = await run(form.querySelector("[type=submit]"), () => state.backend.signUp({
+          fullName: String(f.get("full_name")).trim(), email, password: String(f.get("password")),
+        }));
+      } catch (ex) { err.textContent = ex.message; err.hidden = false; return; }
+      if (res.profile) {
+        state.profile = res.profile;
+        $modal.close();
+        location.hash = "#garage";
+        render();
+        toast("Welcome! Add your first car.");
+        return;
+      }
+      openModal(`<div class="sheet">
+        <header class="sheet-head"><span></span><h2>Check your email</h2><button class="link" data-close>Done</button></header>
+        <p>We sent a link to <strong>${esc(email)}</strong>. Open it on this device to confirm your account, then you're in.</p>
+      </div>`);
+    });
   });
 }
 
@@ -311,6 +395,7 @@ function carCard(car, requests) {
         ${alertBadge(car)}
       </div>
       ${requests.map(requestChip).join("")}
+      ${dueChips(car)}
       ${facts(car)}
     </div>
     <a class="car-rings" href="#car-${car.id}" aria-label="Details for ${esc(car.make_model)}">${rings(car)}</a>
@@ -343,6 +428,7 @@ async function viewCar(id) {
       <h2 class="detail-title">${esc(car.make_model)}</h2>
       ${alertBadge(car)}
       ${requests.map(requestChip).join("")}
+      ${dueChips(car)}
       <div class="rings big">${["interior", "exterior", "battery", "service"]
         .map((k) => ring(car[k], k[0].toUpperCase() + k.slice(1), 104)).join("")}</div>
       <section class="card"><h3 class="card-title">Details</h3>${facts(car)}</section>
@@ -359,6 +445,139 @@ async function viewCar(id) {
       ${footer()}
     </main>`;
 }
+
+// ───────────────────────── views: self-managed owner ─────────────────────────
+
+async function viewOwnerGarage() {
+  document.title = "My Cars | CARPADS";
+  $app.innerHTML = `${topbar("My Cars")}<main class="page"><div class="loading">Loading your cars…</div></main>`;
+  const cars = await state.backend.myCars();
+  state.cars = cars;
+  const limit = carLimit(state.profile);
+  const soon = upcoming(cars);
+  const canAdd = cars.length < limit;
+
+  $app.querySelector("main").innerHTML = `
+    ${installBanner()}
+    ${state.profile.full_name ? `<p class="welcome">Welcome, ${esc(state.profile.full_name)}</p>` : ""}
+    ${soon.length ? `<section class="card coming-up"><h3 class="card-title">Coming up</h3>
+      <ul class="list flush">${soon.map((d) => `<li class="due-item">
+        <span class="${dueClass(d.date)}">${d.label}</span>
+        <span><strong>${esc(d.car.make_model)}</strong> <span class="muted">${dueText(d.date)}</span></span></li>`).join("")}</ul>
+    </section>` : ""}
+    <section class="garage-section">
+      <div class="section-head static"><h2>My cars <small>${cars.length}${limit === Infinity ? "" : ` of ${limit} free`}</small></h2></div>
+      ${cars.length ? cars.map(ownerCarCard).join("")
+        : `<p class="empty">Add your first car to keep its MFK, insurance and service dates in one place.</p>`}
+      <div class="owner-add">
+        ${canAdd ? `<button class="btn primary" data-action="owner-new-car">+ Add a car</button>`
+          : `<p class="muted">The free plan holds up to ${FREE_CARS} cars. Store them with ${COMPANY.name} and every car is included, checked and kept up to date for you.</p>`}
+      </div>
+    </section>
+    ${carpadsPitch(cars)}
+    ${footer()}`;
+}
+
+function ownerCarCard(car) {
+  const row = (label, value) => (value ? `<div><span>${label}:</span> ${esc(value)}</div>` : "");
+  return `<article class="car-card owner-car">
+    <div class="car-main">
+      <div class="car-head"><h3>${esc(car.make_model)}</h3></div>
+      ${dueChips(car)}
+      <div class="facts">
+        ${row("Plate", car.plate)}
+        ${row("Kept at", car.location_name)}
+        ${row("Insurance", [car.insurance, car.policy_number].filter(Boolean).join(" · "))}
+        ${car.mileage_km ? row("Mileage", `${swissNumber(car.mileage_km)} km`) : ""}
+      </div>
+      ${car.notes ? `<div class="quote">${esc(car.notes)}</div>` : ""}
+      <p class="self-note">Updated by you ${ago(car.updated_at || car.created_at)} · not checked by a professional</p>
+    </div>
+    <div class="car-actions"><button class="btn outline" data-action="owner-edit-car" data-car="${car.id}">Edit</button></div>
+  </article>`;
+}
+
+// What the same car would look like at CARPADS, plus the way to get there.
+function carpadsPitch(cars) {
+  const list = cars.map((c) => `- ${c.make_model}${c.plate ? ` (${c.plate})` : ""}`).join("\n");
+  const body = `Hello ${COMPANY.name},\n\nI'd like a quote for storing my car(s) with you:\n${list || "- "}\n\nThank you`;
+  return `<section class="card pitch">
+    <h3 class="card-title">Store it with ${COMPANY.name}</h3>
+    <p>At ${COMPANY.name}, staff check your car regularly and you see it here live: interior, exterior, battery and service condition, its exact location, and delivery to your door in a tap. All app features are free for ${COMPANY.name} clients.</p>
+    <div class="rings preview" aria-label="Example of a checked car">${ring(92, "Interior")}${ring(88, "Exterior")}${ring(97, "Battery")}${ring(80, "Service")}</div>
+    <small class="muted">Example of a car checked by ${COMPANY.name}</small>
+    <div class="row">
+      <a class="btn primary" href="mailto:${COMPANY.email}?subject=${encodeURIComponent("Storage quote")}&body=${encodeURIComponent(body)}">Get a quote</a>
+      <a class="btn ghost" href="${COMPANY.phoneHref}">Call</a>
+    </div>
+  </section>`;
+}
+
+function ownerCarEditor(car, isNew) {
+  const date = (k, label) => `<label class="field"><span>${label}</span><input name="${k}" type="date" value="${esc((car[k] || "").slice(0, 10))}"></label>`;
+  openModal(`
+    <form class="sheet" id="owner-car-form">
+      <header class="sheet-head"><button type="button" class="link" data-close>Cancel</button>
+        <h2>${isNew ? "New car" : esc(car.make_model)}</h2><button class="link strong" type="submit">Save</button></header>
+      <fieldset><legend>Car</legend>
+        <label class="field"><span>Make & model</span><input name="make_model" required value="${esc(car.make_model)}" placeholder="Porsche 911 Carrera"></label>
+        <label class="field"><span>Plate</span><input name="plate" value="${esc(car.plate)}" placeholder="ZH 123456"></label>
+        <label class="field"><span>Where is it kept?</span><input name="location_name" value="${esc(car.location_name || "")}" placeholder="Home garage, storage name…"></label>
+        <label class="field"><span>Mileage (km)</span><input name="mileage_km" type="number" min="0" inputmode="numeric" value="${car.mileage_km || ""}"></label>
+      </fieldset>
+      <fieldset><legend>Insurance</legend>
+        <label class="field"><span>Insurer</span><input name="insurance" value="${esc(car.insurance)}"></label>
+        <label class="field"><span>Policy number</span><input name="policy_number" value="${esc(car.policy_number)}"></label>
+      </fieldset>
+      <fieldset><legend>Reminders</legend>
+        ${date("mfk_due", "Next MFK inspection")}${date("insurance_due", "Insurance renewal")}${date("service_due", "Next service")}
+        <small class="muted">Shown in amber ${SOON_DAYS} days before, in red when overdue.</small>
+      </fieldset>
+      <fieldset><legend>Notes</legend>
+        <textarea name="notes" rows="3" aria-label="Notes" placeholder="Battery charger, tyres, anything to remember">${esc(car.notes || "")}</textarea>
+      </fieldset>
+      ${isNew ? "" : `<button type="button" class="btn danger" data-action-modal="delete">Delete car</button>`}
+    </form>`, (dlg) => {
+    const form = dlg.querySelector("form");
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const f = new FormData(form);
+      const text = (k) => String(f.get(k) || "").trim();
+      const saved = {
+        ...car,
+        make_model: text("make_model"), plate: text("plate"), location_name: text("location_name") || null,
+        mileage_km: Math.max(0, Math.round(Number(f.get("mileage_km")) || 0)),
+        insurance: text("insurance"), policy_number: text("policy_number"),
+        mfk_due: text("mfk_due") || null, insurance_due: text("insurance_due") || null, service_due: text("service_due") || null,
+        notes: text("notes") || null,
+      };
+      delete saved.updated_at; // set by the database
+      await run(dlg.querySelector('button[type="submit"]'), () => state.backend.saveCar(saved));
+      $modal.close();
+      toast("Car saved.");
+      render();
+    });
+    dlg.querySelector('[data-action-modal="delete"]')?.addEventListener("click", async (e) => {
+      if (!e.target.dataset.armed) {
+        e.target.dataset.armed = "1";
+        e.target.textContent = `Tap again to delete ${car.make_model}`;
+        return;
+      }
+      await run(e.target, () => state.backend.deleteCar(car.id));
+      $modal.close();
+      toast("Car deleted.");
+      render();
+    });
+  });
+}
+
+const newCar = (ownerId, extra = {}) => ({
+  id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()), owner_id: ownerId,
+  make_model: "", plate: "", insurance: "", policy_number: "", mileage_km: 0, fuel_level: null, status: "stored",
+  interior: 100, exterior: 100, battery: 100, service: 100, action_alert: null, location_name: null,
+  latitude: null, longitude: null, last_check_at: new Date().toISOString().slice(0, 10),
+  mfk_due: null, insurance_due: null, service_due: null, notes: null, ...extra,
+});
 
 function requestDialog(car, kind) {
   const tomorrow = new Date(Date.now() + 86400000);
@@ -420,6 +639,7 @@ function accountDialog() {
     <div class="sheet">
       <header class="sheet-head"><span></span><h2>Account</h2><button class="link" data-close>Done</button></header>
       <p class="muted">${esc(p.full_name || "")}<br>${esc(p.email || "")}</p>
+      ${isSelfManaged(p) ? `<p class="muted">${p.plan === "plus" ? "Plus plan" : `Free plan · up to ${FREE_CARS} cars`}</p>` : ""}
       ${state.backend.noEmailReset ? `<form id="pw-form" class="stack">
         <label class="field"><span>New password</span>
           <input type="password" name="pw" minlength="8" autocomplete="new-password" required></label>
@@ -481,10 +701,13 @@ async function viewAdminClients() {
   const draw = (q = "") => {
     const ql = q.toLowerCase();
     const shown = clients.filter((c) => !ql || `${c.full_name} ${c.email}`.toLowerCase().includes(ql));
-    list.innerHTML = shown.length
-      ? shown.map((c) => `<li><a href="#client-${c.id}">
-          <strong>${esc(c.full_name || c.email)}</strong><small>${esc(c.email || "")}</small></a></li>`).join("")
-      : `<li class="empty">${clients.length ? "No matching clients." : "No clients yet. Add your first client."}</li>`;
+    const item = (c) => `<li><a href="#client-${c.id}">
+          <strong>${esc(c.full_name || c.email)}</strong><small>${esc(c.email || "")}</small></a></li>`;
+    const managed = shown.filter((c) => !isSelfManaged(c));
+    const own = shown.filter(isSelfManaged);
+    list.innerHTML = (managed.length ? managed.map(item).join("")
+      : `<li class="empty">${clients.some((c) => !isSelfManaged(c)) ? "No matching clients." : "No clients yet. Add your first client."}</li>`)
+      + (own.length ? `<li class="list-label">App users with their own cars (${own.length})</li>${own.map(item).join("")}` : "");
   };
   draw();
   main.querySelector("#search").addEventListener("input", (e) => draw(e.target.value));
@@ -505,11 +728,12 @@ async function viewAdminClient(id, tab = "overview") {
   const cars = await state.backend.carsFor(id);
   state.adminCars = cars;
   state.adminClient = client;
+  const own = isSelfManaged(client); // app user: their cars are entered and kept by themselves
   const dots = (car) => ["interior", "exterior", "battery", "service"]
     .map((k) => `<i style="background:${conditionColor(clamp(car[k]))}"></i>`).join("");
 
   const clientBar = { back: "#admin", account: "client-account", tag: "Client" };
-  if (tab === "history") {
+  if (tab === "history" && !own) {
     $app.innerHTML = `${topbar(client.full_name || client.email, clientBar)}${clientTabs(id, "history")}
       <main class="page"><div id="history"><div class="loading">Loading history…</div></div></main>`;
     state.historyCar = cars.some((c) => c.id === state.historyCar) ? state.historyCar : "";
@@ -519,15 +743,20 @@ async function viewAdminClient(id, tab = "overview") {
     return;
   }
 
-  $app.innerHTML = `${topbar(client.full_name || client.email, clientBar)}${clientTabs(id, "overview")}
+  // App users have no requests, so they get no History tab.
+  $app.innerHTML = `${topbar(client.full_name || client.email, clientBar)}${own ? "" : clientTabs(id, "overview")}
     <main class="page">
+      ${isSelfManaged(client) ? `<section class="card note">
+        <h3 class="card-title">App user</h3>
+        <p>Signed up in the app and looks after their own cars (${client.plan === "plus" ? "Plus plan" : `free plan, up to ${FREE_CARS} cars`}). Not a ${COMPANY.name} client yet.</p>
+      </section>` : ""}
       <section class="card">
         <h3 class="card-title">Cars (${cars.length})</h3>
         <ul class="list flush">${cars.map((car) => `<li><button class="list-btn" data-action="edit-car" data-car="${car.id}">
-          <span><strong>${esc(car.make_model)}</strong><small>${esc(car.plate)} · ${car.status === "stored" ? "Stored" : "Retrieved"}</small></span>
-          <span class="dots">${car.action_alert ? `<span class="alert-dot small">!</span>` : ""}${dots(car)}</span>
+          <span><strong>${esc(car.make_model)}</strong><small>${esc(car.plate)} · ${isSelfManaged(client) ? esc(car.location_name || "Kept by owner") : car.status === "stored" ? "Stored" : "Retrieved"}</small></span>
+          ${own ? "" : `<span class="dots">${car.action_alert ? `<span class="alert-dot small">!</span>` : ""}${dots(car)}</span>`}
         </button></li>`).join("") || `<li class="empty">No cars yet.</li>`}</ul>
-        <button class="btn primary small" data-action="new-car">+ Add car</button>
+        ${own ? "" : `<button class="btn primary small" data-action="new-car">+ Add car</button>`}
       </section>
     </main>`;
 }
@@ -596,6 +825,12 @@ function carEditor(car, isNew) {
       <fieldset><legend>Condition</legend>
         ${slider("interior", "Interior")}${slider("exterior", "Exterior")}${slider("battery", "Battery")}${slider("service", "Service")}
       </fieldset>
+      <fieldset><legend>Reminders</legend>
+        <label class="field"><span>Next MFK inspection</span><input name="mfk_due" type="date" value="${esc((car.mfk_due || "").slice(0, 10))}"></label>
+        <label class="field"><span>Insurance renewal</span><input name="insurance_due" type="date" value="${esc((car.insurance_due || "").slice(0, 10))}"></label>
+        <label class="field"><span>Next service</span><input name="service_due" type="date" value="${esc((car.service_due || "").slice(0, 10))}"></label>
+        <small class="muted">Shown to the client, in amber ${SOON_DAYS} days before and in red when overdue.</small>
+      </fieldset>
       <fieldset><legend>Action alert</legend>
         <input name="action_alert" value="${esc(car.action_alert || "")}" placeholder="No alert" aria-label="Action alert">
         <div class="presets">${presets.map((p) => `<button type="button" class="chip-btn" data-preset="${esc(p)}">${esc(p)}</button>`).join("")}
@@ -645,7 +880,9 @@ function carEditor(car, isNew) {
         action_alert: text("action_alert") || null,
         location_name: text("location_name") || null,
         latitude: num("latitude"), longitude: num("longitude"),
+        mfk_due: text("mfk_due") || null, insurance_due: text("insurance_due") || null, service_due: text("service_due") || null,
       };
+      delete saved.updated_at; // set by the database
       await run(dlg.querySelector('button[type="submit"]'), () => state.backend.saveCar(saved));
       $modal.close();
       toast("Car saved.");
@@ -803,6 +1040,10 @@ async function render() {
       if (hash !== "#admin") { history.replaceState(null, "", "#admin"); }
       return await viewAdminClients();
     }
+    if (isSelfManaged(p)) {
+      if (hash !== "#garage") history.replaceState(null, "", "#garage");
+      return await viewOwnerGarage();
+    }
     const m = hash.match(/^#car-(.+)$/);
     if (m) return await viewCar(m[1]);
     if (hash === "#history") return await viewMyHistory();
@@ -834,14 +1075,9 @@ document.addEventListener("click", (e) => {
   else if (a === "client-account") clientAccountDialog(state.adminClient);
   else if (a === "edit-client") editClientDialog(state.adminClient);
   else if (a === "reset-client-pw") resetClientPasswordDialog(state.adminClient);
-  else if (a === "new-car") {
-    carEditor({
-      id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()), owner_id: state.adminClient.id,
-      make_model: "", plate: "", insurance: "", policy_number: "", mileage_km: 0, fuel_level: null, status: "stored",
-      interior: 100, exterior: 100, battery: 100, service: 100, action_alert: null, location_name: null,
-      latitude: null, longitude: null, last_check_at: new Date().toISOString().slice(0, 10),
-    }, true);
-  }
+  else if (a === "new-car") carEditor(newCar(state.adminClient.id), true);
+  else if (a === "owner-new-car") ownerCarEditor(newCar(state.profile.id, { status: "retrieved", last_check_at: null }), true);
+  else if (a === "owner-edit-car") ownerCarEditor((state.cars || []).find((c) => c.id === el.dataset.car), false);
   else if (a === "edit-car") carEditor(state.adminCars.find((c) => c.id === el.dataset.car), false);
   else if (a === "resolve") run(el, () => state.backend.resolveRequest(el.dataset.id)).then(() => { toast("Marked as done."); render(); });
 });
