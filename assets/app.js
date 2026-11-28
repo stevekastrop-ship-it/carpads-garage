@@ -137,15 +137,16 @@ function footer() {
   </footer>`;
 }
 
-function topbar(title, { back, admin } = {}) {
+// account: what the round button top right opens ("account" = your own account; "client-account" = the open client's details).
+function topbar(title, { back, admin, account = "account", tag } = {}) {
   return `<header class="topbar">
     <div class="topbar-side">${back ? `<a class="icon-btn" href="${back}" aria-label="Back">‹</a>` : `<span class="mini-mark">CARPADS</span>`}</div>
     <h1 class="topbar-title">${esc(title)}</h1>
     <div class="topbar-side right">
-      <button class="icon-btn" data-action="account" aria-label="Account">
+      <button class="icon-btn" data-action="${account}" aria-label="${account === "account" ? "Account" : "Client details"}">
         <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
           <circle cx="12" cy="12" r="10"/><circle cx="12" cy="10" r="3.2"/><path d="M5.5 18.5c1.6-2.3 3.9-3.4 6.5-3.4s4.9 1.1 6.5 3.4"/>
-        </svg>${admin ? `<span class="admin-tag">Admin</span>` : ""}</button>
+        </svg>${tag || admin ? `<span class="admin-tag">${esc(tag || "Admin")}</span>` : ""}</button>
     </div>
   </header>`;
 }
@@ -401,17 +402,18 @@ function accountDialog() {
     <div class="sheet">
       <header class="sheet-head"><span></span><h2>Account</h2><button class="link" data-close>Done</button></header>
       <p class="muted">${esc(p.full_name || "")}<br>${esc(p.email || "")}</p>
-      <form id="pw-form" class="stack">
+      ${state.backend.noEmailReset ? `<form id="pw-form" class="stack">
         <label class="field"><span>New password</span>
           <input type="password" name="pw" minlength="8" autocomplete="new-password" required></label>
         <label class="field"><span>Repeat password</span>
           <input type="password" name="pw2" minlength="8" autocomplete="new-password" required></label>
         <button class="btn outline" type="submit">Change password</button>
-      </form>
+      </form>` : ""}
       ${isDemo && p.role === "admin" ? `<button class="btn ghost" data-action-modal="reset-demo">Reset demo data</button>` : ""}
       <button class="btn danger" data-action-modal="signout">Sign out</button>
     </div>`, (dlg) => {
-    dlg.querySelector("#pw-form").addEventListener("submit", async (e) => {
+    // Only the self-hosted server has no "Forgot password?" email, so its users change the password here.
+    dlg.querySelector("#pw-form")?.addEventListener("submit", async (e) => {
       e.preventDefault();
       const f = new FormData(e.target);
       if (f.get("pw") !== f.get("pw2")) { toast("The passwords don't match."); return; }
@@ -470,7 +472,14 @@ async function viewAdminClients() {
   main.querySelector("#search").addEventListener("input", (e) => draw(e.target.value));
 }
 
-async function viewAdminClient(id) {
+function clientTabs(id, active) {
+  return `<nav class="tabs">
+    <a href="#client-${id}" class="${active === "overview" ? "active" : ""}">Overview</a>
+    <a href="#client-${id}/history" class="${active === "history" ? "active" : ""}">History</a>
+  </nav>`;
+}
+
+async function viewAdminClient(id, tab = "overview") {
   const clients = await state.backend.clients();
   const client = clients.find((c) => c.id === id);
   if (!client) { location.hash = "#admin"; return; }
@@ -481,17 +490,18 @@ async function viewAdminClient(id) {
   const dots = (car) => ["interior", "exterior", "battery", "service"]
     .map((k) => `<i style="background:${conditionColor(clamp(car[k]))}"></i>`).join("");
 
-  $app.innerHTML = `${topbar(client.full_name || client.email, { back: "#admin", admin: true })}
+  const clientBar = { back: "#admin", account: "client-account", tag: "Client" };
+  if (tab === "history") {
+    $app.innerHTML = `${topbar(client.full_name || client.email, clientBar)}${clientTabs(id, "history")}
+      <main class="page"><div id="history"><div class="loading">Loading history…</div></div></main>`;
+    state.historyCar = cars.some((c) => c.id === state.historyCar) ? state.historyCar : "";
+    state.history = await state.backend.clientRequests(id);
+    drawHistory();
+    return;
+  }
+
+  $app.innerHTML = `${topbar(client.full_name || client.email, clientBar)}${clientTabs(id, "overview")}
     <main class="page">
-      <section class="card">
-        <h3 class="card-title">Contact</h3>
-        <div class="facts"><div><span>Email:</span> ${esc(client.email || "–")}</div>
-          <div><span>Phone:</span> ${esc(client.phone || "–")}</div></div>
-        <div class="row">
-          <button class="btn ghost small" data-action="edit-client">Edit contact</button>
-          ${state.backend.resetClientPassword ? `<button class="btn ghost small" data-action="reset-client-pw">New password</button>` : ""}
-        </div>
-      </section>
       <section class="card">
         <h3 class="card-title">Cars (${cars.length})</h3>
         <ul class="list flush">${cars.map((car) => `<li><button class="list-btn" data-action="edit-car" data-car="${car.id}">
@@ -501,6 +511,38 @@ async function viewAdminClient(id) {
         <button class="btn primary small" data-action="new-car">+ Add car</button>
       </section>
     </main>`;
+}
+
+// Requests marked done for the open client, filterable by car.
+function drawHistory() {
+  const card = $app.querySelector("#history");
+  if (!card) return;
+  const cars = state.adminCars || [];
+  const shown = (state.history || []).filter((r) => !state.historyCar || r.car_id === state.historyCar);
+  const filter = cars.length > 1 ? `<section class="card"><label class="field"><span>Car</span>
+    <select id="history-car"><option value="">All cars</option>${cars.map((c) => `
+      <option value="${c.id}" ${state.historyCar === c.id ? "selected" : ""}>${esc(c.make_model)}${c.plate ? ` · ${esc(c.plate)}` : ""}</option>`).join("")}
+    </select></label></section>` : "";
+  const item = (r) => `
+      <li class="request">
+        <div class="request-head"><span class="kind kind-${esc(r.kind)}">${esc(KINDS[r.kind]?.label || r.kind)}</span>
+          ${r.preferred_date ? `<strong>${dayName(r.preferred_date)} ${swissDate(r.preferred_date)}</strong>` : ""}
+          ${r.time_window ? `<span class="muted">${esc(TIME_WINDOWS[r.time_window] || r.time_window)}</span>` : ""}</div>
+        <div><strong>${esc(r.cars?.make_model || "Car")}</strong> <span class="muted">${esc(r.cars?.plate || "")}</span></div>
+        ${r.address ? `<div>📍 ${esc(r.address)}</div>` : ""}
+        ${r.message ? `<div class="quote">“${esc(r.message)}”</div>` : ""}
+        ${r.status === "open"
+          ? `<div class="request-foot"><small class="muted">Requested ${swissDate(r.created_at)}</small>
+              <button class="btn outline small" data-action="resolve" data-id="${r.id}">Mark done</button></div>`
+          : `<small class="muted">Requested ${swissDate(r.created_at)}${r.done_at ? ` · Done ${swissDate(r.done_at)}` : ""}</small>`}
+      </li>`;
+  const group = (title, list, none) => `<section class="card"><h3 class="card-title">${title} (${list.length})</h3>
+    <ul class="list flush history">${list.map(item).join("") || `<li class="empty">${none}</li>`}</ul></section>`;
+  const forCar = state.historyCar ? " for this car" : "";
+  card.innerHTML = filter
+    + group("Open", shown.filter((r) => r.status === "open"), `No open requests${forCar}.`)
+    + group("Done", shown.filter((r) => r.status === "done"), `No completed requests${forCar} yet.`);
+  card.querySelector("#history-car")?.addEventListener("change", (e) => { state.historyCar = e.target.value; drawHistory(); });
 }
 
 function carEditor(car, isNew) {
@@ -616,7 +658,7 @@ function newClientDialog() {
       <label class="field"><span>Temporary password</span>
         <div class="row"><input name="password" required minlength="8" value="${gen()}" class="mono">
         <button type="button" class="btn ghost small" data-action-modal="regen" aria-label="New password">↻</button></div></label>
-      <small class="muted">Share the login with your client. They can change the password under Account.</small>
+      <small class="muted">Share the login with your client. ${state.backend.noEmailReset ? "They can change the password under Account." : `They can set their own with "Forgot password?" on the login screen.`}</small>
       <button class="btn primary" type="submit">Create client</button>
     </form>`, (dlg) => {
     const form = dlg.querySelector("form");
@@ -672,6 +714,19 @@ function resetClientPasswordDialog(client) {
   });
 }
 
+// The open client's details, behind the top-right button on their page.
+function clientAccountDialog(client) {
+  openModal(`
+    <div class="sheet">
+      <header class="sheet-head"><span></span><h2>Client</h2><button class="link" data-close>Done</button></header>
+      <div class="facts"><div><strong>${esc(client.full_name || "–")}</strong></div>
+        <div><span>Email:</span> ${esc(client.email || "–")}</div>
+        <div><span>Phone:</span> ${esc(client.phone || "–")}</div></div>
+      <button class="btn outline" data-action="edit-client">Edit contact</button>
+      ${state.backend.resetClientPassword ? `<button class="btn ghost" data-action="reset-client-pw">New password</button>` : ""}
+    </div>`);
+}
+
 function editClientDialog(client) {
   openModal(`
     <form class="sheet">
@@ -724,7 +779,7 @@ async function render() {
     if (p.role === "admin") {
       let m;
       if (hash === "#requests") return await viewAdminRequests();
-      if ((m = hash.match(/^#client-(.+)$/))) return await viewAdminClient(m[1]);
+      if ((m = hash.match(/^#client-([^/]+)(\/history)?$/))) return await viewAdminClient(m[1], m[2] ? "history" : "overview");
       if (hash !== "#admin") { history.replaceState(null, "", "#admin"); }
       return await viewAdminClients();
     }
@@ -755,6 +810,7 @@ document.addEventListener("click", (e) => {
     el.closest(".install")?.remove();
   }
   else if (a === "new-client") newClientDialog();
+  else if (a === "client-account") clientAccountDialog(state.adminClient);
   else if (a === "edit-client") editClientDialog(state.adminClient);
   else if (a === "reset-client-pw") resetClientPasswordDialog(state.adminClient);
   else if (a === "new-car") {

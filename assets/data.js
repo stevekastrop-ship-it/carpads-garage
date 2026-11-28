@@ -16,6 +16,8 @@ export async function createBackend() {
 // ───────────────────────── Own server (server/ add-on) ─────────────────────────
 
 class ServerBackend {
+  noEmailReset = true; // no password-reset emails here; users change it under Account
+
   async call(method, path, body) {
     let res;
     try {
@@ -62,6 +64,7 @@ class ServerBackend {
   }
   async openRequests() { return this.call("GET", "requests/open"); }
   async resolveRequest(id) { await this.call("POST", `requests/${encodeURIComponent(id)}/done`, {}); }
+  async clientRequests(ownerId) { return this.call("GET", `clients/${encodeURIComponent(ownerId)}/requests`); }
 }
 
 // ───────────────────────── Supabase ─────────────────────────
@@ -179,7 +182,17 @@ class SupabaseBackend {
   }
 
   async resolveRequest(id) {
+    // done_at is set by the database (see stamp_request_done in schema.sql).
     must(await this.sb.from("service_requests").update({ status: "done" }).eq("id", id));
+  }
+
+  // All of one client's requests, open and done (admin history).
+  async clientRequests(ownerId) {
+    return must(await this.sb.from("service_requests")
+      .select("*, cars(make_model, plate)")
+      .eq("owner_id", ownerId)
+      .order("done_at", { ascending: false, nullsFirst: false })
+      .order("created_at", { ascending: false }));
   }
 }
 
@@ -346,8 +359,16 @@ class DemoBackend {
   async resolveRequest(id) {
     this.admin();
     const r = this.db.requests.find((x) => x.id === id);
-    if (r) r.status = "done";
+    if (r && r.status === "open") { r.status = "done"; r.done_at = new Date().toISOString(); }
     this.persist();
+  }
+
+  async clientRequests(ownerId) {
+    this.admin();
+    return this.db.requests.filter((r) => r.owner_id === ownerId).map((r) => {
+      const car = this.db.cars.find((c) => c.id === r.car_id);
+      return { ...r, cars: car ? { make_model: car.make_model, plate: car.plate } : null };
+    }).sort((a, b) => (b.done_at || "").localeCompare(a.done_at || "") || (b.created_at || "").localeCompare(a.created_at || ""));
   }
 
   /** Demo only: put the sample data back. */

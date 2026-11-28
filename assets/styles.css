@@ -179,7 +179,7 @@ legend { font-size: 12px; letter-spacing: .18em; text-transform: uppercase; colo
 .detail-title { font-size: clamp(30px, 8vw, 44px); }
 .card { background: var(--surface); border-radius: 14px; padding: 16px; display: flex; flex-direction: column; gap: 12px; margin: 0 var(--gutter) 14px; }
 .page.detail .card { margin: 0; }
-.page > .card:first-child { margin-top: 16px; }
+.page > .card:first-child, #history > .card:first-child { margin-top: 16px; }
 .card p { margin: 0; }
 .card-title { font-size: 12px; letter-spacing: .2em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
 .map { width: 100%; height: 220px; border: 0; border-radius: 10px; filter: grayscale(.3) brightness(.9); }
@@ -233,6 +233,9 @@ input[type="range"] { width: 100%; accent-color: var(--text); }
 .segmented input:focus-visible + span { outline: 2px solid var(--text); }
 .presets { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip-btn { font-size: 13px; padding: 6px 10px; border-radius: 999px; background: var(--surface-2); border: 1px solid #3a3d47; cursor: pointer; }
+.card .request { background: var(--surface-2); }
+.card .request .kind:not(.kind-delivery):not(.kind-pickup) { background: var(--surface); }
+.history .empty { padding: 8px 0; }
 .login-details { background: var(--surface); padding: 14px; border-radius: 10px; white-space: pre-wrap; word-break: break-all; font-size: 14px; }
 
 /* ───── Dialog (bottom sheet on phones) ───── */
